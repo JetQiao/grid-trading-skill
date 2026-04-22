@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grid-trading-skill"
+version = "1.0.0"
+description = "Grid trading strategy skill: arithmetic/geometric grid, backtest engine, risk control. Compatible with Claude Code and OpenAI Codex CLI."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "JetQiao" }]
+keywords = ["grid-trading", "quant", "backtest", "claude-code", "codex", "skill"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = []
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.7", "pandas>=2.0", "numpy>=1.24"]
+dev  = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/JetQiao/grid-trading-skill"
+Repository = "https://github.com/JetQiao/grid-trading-skill"
+Issues = "https://github.com/JetQiao/grid-trading-skill/issues"
+
+[tool.setuptools.packages.find]
+include = ["grid_trading*"]
+exclude = ["grid_trading.tests*"]
+
+[tool.setuptools.package-data]
+grid_trading = ["SKILL.md"]
