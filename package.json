@@ -1,0 +1,43 @@
+{
+  "name": "grid-trading-skill",
+  "version": "1.1.0",
+  "description": "Grid trading strategy skill (arithmetic/geometric grid, backtest engine, risk control). One-click install for Claude Code and OpenAI Codex CLI.",
+  "keywords": [
+    "grid-trading",
+    "quant",
+    "backtest",
+    "claude-code",
+    "codex",
+    "skill",
+    "agent",
+    "anthropic",
+    "openai"
+  ],
+  "homepage": "https://github.com/JetQiao/grid-trading-skill#readme",
+  "bugs": "https://github.com/JetQiao/grid-trading-skill/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JetQiao/grid-trading-skill.git"
+  },
+  "license": "MIT",
+  "author": "JetQiao",
+  "type": "commonjs",
+  "bin": {
+    "grid-trading-skill": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "grid_trading/",
+    "AGENTS.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "scripts": {
+    "postinstall": "node bin/cli.js install --silent-if-global-only || true",
+    "test": "python3 -m unittest discover -s grid_trading/tests -p \"test_*.py\""
+  },
+  "preferGlobal": true
+}

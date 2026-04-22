@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grid-trading-skill"
-version = "1.0.0"
+version = "1.1.0"
 description = "Grid trading strategy skill: arithmetic/geometric grid, backtest engine, risk control. Compatible with Claude Code and OpenAI Codex CLI."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -11,48 +11,67 @@
 
 ## 📦 一键安装（零代码经验也能用）
 
-### macOS / Linux
+### 🌟 方式一：npx（**推荐**，跨平台一条命令）
 
 ```bash
-# 1. 下载项目（任选一种）
-git clone https://github.com/JetQiao/grid-trading-skill.git
-# 或从 Releases 下载 zip 解压
+# 通用（直接从 GitHub 拉取，无需发布到 npm）
+npx github:JetQiao/grid-trading-skill
 
-cd grid-trading-skill
-
-# 2. 一键安装
-bash install.sh
+# 或（npm 发布后）
+npx grid-trading-skill
 ```
 
-### Windows
+仅需 Node.js 16+，无需 Python，**Mac / Linux / Windows 通用**。
+默认会同时部署到：
 
-```powershell
-# 下载/解压后，在项目目录打开 PowerShell：
+| 目标 | 路径 |
+|---|---|
+| Claude Code skill | `~/.claude/skills/grid-trading/` |
+| OpenAI Codex agent | `~/.codex/agents/grid-trading/` |
+
+常用命令：
+
+```bash
+npx grid-trading-skill                    # 全部安装（默认）
+npx grid-trading-skill install --claude-only
+npx grid-trading-skill install --codex-only
+npx grid-trading-skill status             # 查看安装状态
+npx grid-trading-skill uninstall          # 全部卸载
+npx grid-trading-skill help
+```
+
+也可以全局安装：
+
+```bash
+npm install -g grid-trading-skill
+grid-trading-skill status
+```
+
+### 🔧 方式二：Shell 脚本（无需 Node）
+
+```bash
+# macOS / Linux
+git clone https://github.com/JetQiao/grid-trading-skill.git
+cd grid-trading-skill && bash install.sh
+
+# Windows
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-### 安装内容
-
-脚本会自动完成三件事：
-
-| 动作 | 目标路径 |
-|---|---|
-| 安装 Python 包 `grid_trading` | 用户 site-packages |
-| 部署 Claude Code skill | `~/.claude/skills/grid-trading/` |
-| 部署 OpenAI Codex agent | `~/.codex/agents/grid-trading/` |
-
-### 只装一个？
+### 🐍 方式三：pip（仅作为 Python 库使用）
 
 ```bash
-bash install.sh --claude-only    # 只装 Claude Code skill
-bash install.sh --codex-only     # 只装 Codex agent
-bash install.sh --uninstall      # 全部卸载
+pip install git+https://github.com/JetQiao/grid-trading-skill.git
 ```
 
 ### 前置要求
 
-- **Python 3.11+**（脚本会自动检测；没装请去 <https://www.python.org/downloads/>）
-- macOS/Linux 的 `bash` 或 Windows 的 `PowerShell`
+| 安装方式 | 需要 |
+|---|---|
+| `npx` / `npm` | Node.js 16+ |
+| `bash install.sh` | macOS/Linux + bash（pip 自动调用） |
+| `install.ps1` | Windows + PowerShell |
+| `pip install` | Python 3.11+ |
 
 ---
 
