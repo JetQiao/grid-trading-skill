@@ -77,6 +77,17 @@ pip install git+https://github.com/JetQiao/grid-trading-skill.git
 
 ## 🚀 快速使用
 
+### ⚡ 一条命令生成 HTML 报告（v1.2+ 推荐）
+
+```bash
+npx grid-trading-skill run "BTC/USDT 40000~60000 20格 本金10000 手续费0.1%"
+```
+
+自动完成：解析中文/英文指令 → 构建网格 → 跑 sine-wave 回测 → 生成**深色主题
+HTML 报告**（单文件内联 CSS + SVG 资金曲线）→ 用默认浏览器打开。
+
+可选：`--no-open` / `--no-backtest` / `--out path.html`
+
 ### 在 Claude Code 中调用
 
 安装完成后，打开 Claude Code 输入：

@@ -1,6 +1,6 @@
 {
   "name": "grid-trading-skill",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Grid trading strategy skill (arithmetic/geometric grid, backtest engine, risk control). One-click install for Claude Code and OpenAI Codex CLI.",
   "keywords": [
     "grid-trading",

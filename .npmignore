@@ -1,0 +1,22 @@
+# Exclude Python bytecode and caches from npm package
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+*.whl
+*.tar.gz
+*.zip
+
+# Release notes (published on GitHub only)
+RELEASE_NOTES_*.md
+
+# Dev files
+.claude/
+node_modules/
+pyproject.toml
+
+# Keep: grid_trading/, bin/, AGENTS.md, README.md, LICENSE, package.json

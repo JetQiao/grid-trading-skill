@@ -1,88 +1,149 @@
-# Grid Trading Agent (OpenAI Codex CLI)
+# Grid Trading Skill — Agent Instructions
 
-This file follows the [OpenAI Codex CLI `AGENTS.md` convention](https://platform.openai.com/docs/codex).
-When Codex encounters this repo, it should treat the `grid_trading/` package as
-an agent-callable skill.
+When the user asks anything about **grid trading** (网格交易、等差/等比网格、
+网格参数、网格回测、grid bot/strategy/range-bound strategy), you **MUST**:
 
-## Identity
+1. Invoke the installed Python package `grid_trading` via a shell command.
+2. Produce a **dark-themed HTML report** as the final deliverable — **never**
+   dump a raw CSV or plain-text table. The HTML file path is what you show
+   the user.
 
-- **Name**: `grid-trading`
-- **Version**: 1.0.0
-- **Purpose**: Build, backtest, and risk-check grid trading strategies
-  (arithmetic / geometric grids) for any tradable symbol.
+Do **not** compute the grid or backtest numbers yourself by hand.
 
-## When to Activate
+## Why this rule
 
-Activate on user prompts matching any of:
+Manual math produces a price list but misses per-level **quantity**,
+**expected profit after fees**, **equity curve**, **Sharpe / max drawdown**,
+and **risk alerts**. The package has all of this and renders it into a
+self-contained HTML file the user can open in any browser.
 
-- 网格交易、等差网格、等比网格、网格参数、网格回测、自动补单
-- grid trading, grid bot, grid backtest, grid strategy, range-bound strategy
-- buy-low-sell-high grid, price grid, DCA grid
+## Primary path — one shell command
 
-## Inputs the Agent Expects
+If the user's prompt already contains the parameters, just run:
 
-Minimal text input example:
-
-```
-symbol=BTC/USDT, lower=40000, upper=60000, grids=20,
-capital=10000, type=geometric, fee=0.001
+```bash
+npx grid-trading-skill run "BTC/USDT 40000~60000 20格 本金10000 手续费0.1%"
 ```
 
-Or a Python `GridConfig` object. Required fields: `symbol`, `grid_type`
-(`arithmetic` | `geometric`), `price_lower`, `price_upper`, `grid_count`,
-`total_capital`. Optional: `fee_rate`, `stop_loss_price`, `take_profit_price`.
+This parses the prompt, builds the grid, runs a sine-wave backtest, writes
+an HTML report to a temp file, opens it in the default browser, and prints
+the path. That's usually all you need — then tell the user:
+> "已生成报告：`/tmp/grid_report_xxx.html`（已在浏览器打开）"
 
-## Capabilities
+Flags:
+- `--no-open` — skip opening the browser (useful in headless/SSH contexts)
+- `--no-backtest` — grid only, no backtest section
+- `--out <path>` — custom output path
 
-| Capability | Entry point |
-|---|---|
-| Build grid table       | `GridBuilder.build_arithmetic / build_geometric` |
-| Recommend grid count   | `GridBuilder.recommend_grid_count` |
-| Run strategy live      | `GridStrategy.on_price_update(price, ts)` |
-| Backtest price series  | `BacktestSimulator.run(price_series)` |
-| Pre-trade risk gate    | `RiskChecker.check_before_order` |
-| Tick-level risk monitor| `RiskChecker.check_on_price_update` |
+## Fallback path — direct Python
 
-## Outputs
+If `npx` isn't available or the user wants programmatic control:
 
-1. **Grid distribution table** (per-level buy/sell/qty/profit).
-2. **Capital allocation summary**.
-3. **BacktestResult** with: total_return, annualized_return, max_drawdown,
-   sharpe_ratio, win_rate, equity_curve, trade_log, risk_alerts.
-4. **Risk alerts** with `level` (warning/critical), `type`, `message`,
-   `suggested_action`.
+```bash
+python3 -m grid_trading.cli \
+  --symbol BTC/USDT --lower 40000 --upper 60000 \
+  --count 20 --capital 10000 --fee 0.001 \
+  --type geometric --backtest sine \
+  --out ~/grid_report.html --open
+```
 
-## Quick-Start Code
+If `import grid_trading` fails, prepend the source dir to `PYTHONPATH`:
+
+```bash
+PYTHONPATH=~/.codex/skills/grid-trading python3 -m grid_trading.cli ...
+```
+
+## Python API (for custom workflows)
 
 ```python
+from grid_trading.core.grid_builder import GridBuilder
+from grid_trading.report.html_report import render_html_report, alert_to_dict
 from grid_trading.strategy.grid_strategy import GridConfig, GridStrategy
 from grid_trading.backtest.simulator import BacktestSimulator
+from grid_trading.tests.mock_data import sine_wave
 
-config = GridConfig(
-    symbol="BTC/USDT", grid_type="arithmetic",
-    price_lower=44000, price_upper=56000,
-    grid_count=12, total_capital=10000, fee_rate=0.001,
+params = dict(
+    symbol="BTC/USDT", grid_type="geometric",
+    price_lower=40000, price_upper=60000,
+    grid_count=20, total_capital=10000, fee_rate=0.001,
 )
-sim = BacktestSimulator(GridStrategy(config))
-result = sim.run(price_series)   # price_series = [(timestamp, price), ...]
-sim.print_report(result)
+
+builder = GridBuilder(fee_rate=params["fee_rate"])
+grids = builder.build_geometric(
+    lower=params["price_lower"], upper=params["price_upper"],
+    n=params["grid_count"], capital=params["total_capital"],
+)
+summary = builder.summary(grids)
+
+cfg = GridConfig(**params)
+sim = BacktestSimulator(GridStrategy(cfg))
+res = sim.run(sine_wave(base_price=50000, amplitude=8000, points=500))
+bt = dict(
+    total_return=res.total_return, annualized_return=res.annualized_return,
+    max_drawdown=res.max_drawdown, sharpe_ratio=res.sharpe_ratio,
+    total_trades=res.total_trades, win_rate=res.win_rate,
+    avg_profit_per_trade=res.avg_profit_per_trade,
+    fee_total=res.fee_total, trading_days=res.trading_days,
+    equity_curve=res.equity_curve,
+)
+
+html = render_html_report(
+    params=params, grids=grids, summary=summary,
+    backtest=bt,
+    risk_alerts=[alert_to_dict(a) for a in res.risk_alerts],
+)
+open("grid_report.html", "w", encoding="utf-8").write(html)
 ```
 
-## Design Constraints (honor these when extending)
+## Required response format
 
-- No exchange SDK dependency — inputs come from `list[tuple[float, float]]`.
-- All prices use 8-decimal precision.
-- All percentages stored as decimals (0.001 = 0.1%); converted only at display.
-- Grid spacing must satisfy `step_ratio > 2 × fee_rate`.
-- Idempotency: only one PENDING order per `(level, side)` at a time.
-- No global state — every run isolated to a `GridStrategy` instance.
+After running the command, your reply to the user should be **short**:
 
-## Tests
+1. One line: "已生成报告：`<path>`"
+2. A 3-5 bullet summary of key numbers (总格数、单格收益率、回测总收益率、
+   夏普、最大回撤) pulled from the CLI stdout.
+3. Offer next steps: 换参数重跑 / 换行情（`--backtest trending-down` or
+   `--backtest volatile`）/ 仅建网格（`--no-backtest`）.
 
-Run `python3 -m unittest discover -s grid_trading/tests -p "test_*.py"` —
-all 48 tests should pass before committing any change.
+Do **not** paste the full grid table into the reply — the HTML is the
+deliverable. The user will open it.
 
-## Full Documentation
+## Parameter parsing
 
-See [`grid_trading/SKILL.md`](grid_trading/SKILL.md) for the full reference,
-input/output formats, and module map.
+The `run` subcommand parses Chinese or English prompts. Required fields:
+
+| Field | Aliases |
+|---|---|
+| symbol | `BTC/USDT`, `ETH-USDT`, `SOLUSDT` |
+| range | `40000~60000`, `40000 到 60000`, `40k-60k` |
+| count | `20格`, `20 grids`, `20 levels` |
+| capital | `本金 10000`, `资金 10000`, `capital 10000` |
+| fee (optional, default 0.001) | `0.1%`, `手续费 0.001` |
+| type (optional, default geometric) | `等差/等比`, `arithmetic/geometric` |
+
+If the parser fails, fall back to the direct Python CLI and pass fields
+explicitly.
+
+## Failure modes
+
+- `ValueError: Grid spacing ratio … too small` → reduce `--count` or widen
+  the range; `GridBuilder.recommend_grid_count(lower, upper, fee)` suggests
+  a safe count.
+- `import grid_trading` fails → run `npx grid-trading-skill` to install, or
+  set `PYTHONPATH=~/.codex/skills/grid-trading`.
+- `python3` not found → ask the user to install Python 3.11+.
+
+## Design constraints (preserve when extending)
+
+- 8-decimal price precision
+- Percentages stored as decimals internally
+- Grid spacing must satisfy `step_ratio > 2 × fee_rate`
+- Idempotency: one PENDING order per `(level, side)`
+- No global state — every run is a fresh `GridStrategy` instance
+- HTML reports are self-contained (inline CSS + SVG, no network)
+
+## Full reference
+
+- README: [`README.md`](README.md)
+- Detailed skill spec: [`grid_trading/SKILL.md`](grid_trading/SKILL.md)
+- Tests: `python3 -m unittest discover -s grid_trading/tests -p "test_*.py"`
