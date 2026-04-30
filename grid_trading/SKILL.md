@@ -4,29 +4,67 @@
 
 网格交易、grid trading、等差网格、等比网格、区间震荡策略、
 网格参数、网格回测、自动补单、grid backtest、grid strategy、
-price grid、buy-low-sell-high grid、grid bot
+price grid、buy-low-sell-high grid、grid bot、
+建议中线价、网格上下限、自动推荐网格、auto grid、
+A 股网格、港股网格、美股网格、加密网格
 
 ---
 
 ## What This Skill Does
 
 Builds, simulates, and analyses grid trading strategies for any asset.
-Given a price range, capital, and grid count, it:
+
+In **auto mode** (v1.2.1+), the skill fetches real market data (no API key,
+no paid feed) for any A-share / HK / US / crypto symbol and recommends:
+
+- **建议中线价** — robust median-blended center.
+- **建议网格下限 / 上限** — derived from σ / ATR / quantile of recent K-line.
+- **建议网格类型 / 格数** — geometric vs arithmetic, plus the maximum grid
+  count whose per-step ratio still beats `2 × fee_rate`.
+
+In **manual mode**, given a price range, capital, and grid count, it:
 
 1. Constructs either an **arithmetic** (equal-spacing) or **geometric**
    (equal-ratio) grid of buy/sell levels.
-2. Runs an **event-driven backtest** over historical or synthetic price data.
+2. Runs an **event-driven backtest** over historical or synthetic price data
+   (or real K-line replay via `--backtest auto`).
 3. Tracks **position & PnL** in real time (buy cost basis, realized/unrealized
    gains, fees).
 4. Enforces **risk rules** (capital floor, drawdown limit, stop-loss,
    take-profit).
-5. Outputs a **performance report** and **per-level grid table**.
+5. Outputs a **performance report** and **per-level grid table** as a
+   self-contained dark-themed HTML.
 
 ---
 
 ## Input Format
 
-### Minimal (text)
+### Auto mode (real data, recommended)
+
+```
+auto=600519, capital=50000              # A-share — Kweichow Moutai
+auto=00700, capital=20000                # HK     — Tencent
+auto=AAPL,  capital=5000                 # US     — Apple
+auto=BTC/USDT, capital=10000             # Crypto — BTC
+```
+
+CLI:
+
+```bash
+python -m grid_trading.cli --auto 600519 --capital 50000 --open
+python -m grid_trading.cli --auto BTC/USDT --capital 10000 --backtest auto --open
+python -m grid_trading.cli --auto AAPL --method atr --safety 1.2 --open
+python -m grid_trading.cli --auto 00700 --json     # JSON output for chaining
+```
+
+The `--auto SYMBOL` flag overrides `--lower / --upper / --count / --type`.
+Tunable knobs:
+- `--window N` — bars analyzed (default 120 ≈ 6 months daily)
+- `--method {sigma,atr,quantile}` — bound derivation method
+- `--safety F` — multiplier on band width (1.0=neutral, 1.2=wider)
+- `--max-grids N` — hard cap on auto-recommended grid count
+
+### Minimal manual (text)
 
 ```
 symbol=BTC/USDT, lower=40000, upper=60000, grids=20,
@@ -158,11 +196,68 @@ grid_trading/
 ├── backtest/
 │   ├── simulator.py          BacktestSimulator + BacktestResult
 │   └── metrics.py            total_return, max_drawdown, sharpe_ratio, …
+├── data/                     # v1.2.1 — real-data fetchers (no API key)
+│   ├── http.py               stdlib HTTP wrapper, gzip-aware, gracefully degrades
+│   ├── cache.py              file cache (5-min TTL by default)
+│   ├── symbol.py             cross-market symbol normalization
+│   ├── quote.py              fetch_quote — eastmoney → xueqiu → tencent → sina → yahoo / binance
+│   ├── kline.py              fetch_kline — eastmoney → akshare → yahoo / binance
+│   ├── fundamentals.py       fetch_fundamentals — PE/PB/ROE/market cap
+│   ├── flows.py              fetch_flows — 北向 / 龙虎榜 / 两融 / 主力净流入
+│   ├── disclosures.py        fetch_disclosures — cninfo 公告 + eastmoney 研报
+│   ├── macro.py              fetch_macro_news — DuckDuckGo 宏观/政策/舆情/杀猪盘
+│   └── social.py             fetch_social_hot — 微博/知乎/百度/抖音/头条/B 站
+├── recommend/                # v1.2.1
+│   └── auto_grid.py          recommend_grid — mid-line + lower/upper + grid type/count
+├── report/
+│   └── html_report.py        dark-themed HTML, single file, no JS deps
 └── tests/
     ├── mock_data.py           sine_wave / trending_down / volatile_spike
-    ├── test_grid_builder.py   23 unit tests
-    └── test_simulator.py      25 integration tests
+    ├── test_grid_builder.py   GridBuilder unit tests
+    ├── test_simulator.py      backtest integration tests
+    ├── test_data_symbol.py    symbol parsing tests
+    ├── test_data_cache.py     file-cache TTL tests
+    └── test_recommend.py      recommender determinism tests
 ```
+
+## Real-data Sources (v1.2.1)
+
+All sources free, no API key. Failures degrade silently to the next source:
+
+| Data                       | Primary                          | Fallback                                |
+|----------------------------|----------------------------------|-----------------------------------------|
+| 实时行情 / PE / 市值       | 东方财富 push2                   | 雪球 → 腾讯 → 新浪 → Yahoo              |
+| K 线 / 技术指标            | akshare（可选）                  | 东方财富 push2his → Yahoo               |
+| 财报 / PE / PB / ROE       | akshare（可选）                  | 东方财富 F10 → Yahoo quoteSummary       |
+| 龙虎榜 / 北向 / 两融       | akshare（可选）                  | 东方财富 datacenter                     |
+| 公告 / 研报                | 巨潮 cninfo                      | 东方财富 报告中心                       |
+| 港股                       | akshare hk / 东方财富             | Yahoo `.HK`                             |
+| 美股                       | Yahoo Finance                    | akshare us                              |
+| 加密                       | Binance public klines/ticker     | —                                       |
+| 宏观 / 政策 / 舆情 / 杀猪盘 | DuckDuckGo HTML 搜索             | —                                       |
+| 社交热榜（v2.12 兼容）     | 微博/知乎/百度/抖音/头条/B 站 官方 JSON | 5 分钟文件缓存，单平台失败不影响其他    |
+
+`akshare`/`yfinance` are optional — install only if you want them as
+fallbacks (`pip install akshare yfinance`). Without them, the stdlib paths
+(eastmoney, sina, yahoo public chart endpoint, binance) cover every market.
+
+## Auto-recommendation Method
+
+`recommend_grid(symbol)` does the following deterministically:
+
+1. Fetch ~120 daily bars + spot quote for `symbol`.
+2. **建议中线价** = `0.7 × median(closes) + 0.3 × current_price` (robust + responsive).
+3. **网格上下限** =
+   - `sigma` (default): `mid ± 2σ_close`
+   - `atr`: `mid ± 8 × ATR`
+   - `quantile`: anchor 10–90% close percentile around mid
+4. Clamp bounds to `[0.97 × min_low, 1.03 × max_high]`; floor at ±2% half-width.
+5. Pick **grid_type**: `geometric` if `upper/lower > 1.5`, else `arithmetic`.
+6. Pick **grid_count**: largest N such that `step_ratio > 2 × fee_rate`,
+   capped at `--max-grids` (default 60), floored at 6.
+
+The result is rendered at the top of the HTML report as a hero panel and
+also returned as JSON via `--json`.
 
 ---
 
