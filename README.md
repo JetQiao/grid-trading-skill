@@ -1,11 +1,26 @@
 # grid-trading-skill
 
 > 一个开箱即用的**网格交易策略** Skill —— 支持等差/等比网格、完整回测引擎、
-> 持仓追踪、风控告警。同时适配 **Claude Code** 与 **OpenAI Codex CLI**。
+> 持仓追踪、风控告警。**v1.2.1 起支持真实数据自动推荐建议中线价 + 网格上下限**
+> （A 股 / 港股 / 美股 / 加密，全部免费，零 API key）。
+> 同时适配 **Claude Code** 与 **OpenAI Codex CLI**。
 
-![tests](https://img.shields.io/badge/tests-48%20passing-brightgreen)
+![tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)
 ![python](https://img.shields.io/badge/python-3.11+-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
+
+## 🚀 v1.2.1 一键真实数据网格推荐
+
+```bash
+python -m grid_trading.cli --auto 600519 --capital 50000 --open      # 茅台
+python -m grid_trading.cli --auto 00700  --capital 20000 --open      # 腾讯
+python -m grid_trading.cli --auto AAPL   --capital 5000  --open      # 苹果
+python -m grid_trading.cli --auto BTC/USDT --capital 10000 --backtest auto --open
+```
+
+数据源（全部零 API key、自动多源回退）：
+东方财富 · 雪球 · 腾讯 · 新浪 · Yahoo · 巨潮 cninfo · DuckDuckGo · Binance ·
+微博 / 知乎 / 百度 / 抖音 / 头条 / B 站 · `akshare`、`yfinance` 可选增强。
 
 ---
 
@@ -159,7 +174,14 @@ grid_trading/
 ├── backtest/
 │   ├── simulator.py            # 事件驱动回测引擎
 │   └── metrics.py              # 总收益/回撤/夏普
-└── tests/                      # 48 个单元 + 集成测试
+├── data/                       # v1.2.1 真实数据多源回退层
+│   ├── http.py / cache.py / symbol.py
+│   ├── quote.py / kline.py / fundamentals.py
+│   ├── flows.py / disclosures.py
+│   └── macro.py / social.py
+├── recommend/                  # v1.2.1 中线 + 上下限 + 格数自动推荐
+│   └── auto_grid.py
+└── tests/                      # 77 个单元 + 集成测试
 ```
 
 ---
@@ -182,7 +204,7 @@ grid_trading/
 python3 -m unittest discover -s grid_trading/tests -p "test_*.py" -v
 ```
 
-预期：`Ran 48 tests in ~0.03s OK`
+预期：`Ran 77 tests in ~0.03s OK`
 
 ---
 

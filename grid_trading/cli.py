@@ -1,18 +1,21 @@
 """Command-line entry point: build grid + optional backtest + HTML report.
 
-Usage:
+Manual mode (explicit lower/upper):
     python -m grid_trading.cli \\
         --symbol BTC/USDT --lower 40000 --upper 60000 \\
         --count 20 --capital 10000 --fee 0.001 \\
         --type geometric --backtest sine --out report.html --open
 
-All numeric args are plain numbers (fees as decimals: 0.001 = 0.1%).
+Auto mode (real data + auto-recommended bounds):
+    python -m grid_trading.cli --auto 600519 --capital 50000 --open
+    python -m grid_trading.cli --auto BTC/USDT --capital 10000 --backtest auto --open
+    python -m grid_trading.cli --auto AAPL --capital 5000 --method atr --open
 """
 
 from __future__ import annotations
 
 import argparse
-import os
+import json
 import sys
 import webbrowser
 from pathlib import Path
@@ -26,34 +29,106 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="python -m grid_trading.cli",
         description="Build grid trading plan, optionally backtest, and render HTML report.",
     )
+    # ---- manual mode ----
     p.add_argument("--symbol", default="BTC/USDT", help="Trading pair label (for display).")
-    p.add_argument("--lower",  type=float, required=True, help="Lower price boundary.")
-    p.add_argument("--upper",  type=float, required=True, help="Upper price boundary.")
-    p.add_argument("--count",  type=int,   required=True, help="Grid count.")
-    p.add_argument("--capital", type=float, required=True, help="Total capital to allocate.")
+    p.add_argument("--lower",  type=float, help="Lower price boundary (manual mode).")
+    p.add_argument("--upper",  type=float, help="Upper price boundary (manual mode).")
+    p.add_argument("--count",  type=int,   help="Grid count (manual mode).")
+    p.add_argument("--capital", type=float, default=10000.0, help="Total capital to allocate.")
     p.add_argument("--fee",    type=float, default=0.001, help="Fee rate as decimal (0.001 = 0.1%%).")
     p.add_argument("--type",   choices=["arithmetic", "geometric"], default="geometric",
                    dest="grid_type", help="Grid type.")
     p.add_argument("--stop-loss",   type=float, default=None, dest="stop_loss_price")
     p.add_argument("--take-profit", type=float, default=None, dest="take_profit_price")
+
+    # ---- auto mode ----
+    p.add_argument(
+        "--auto",
+        metavar="SYMBOL",
+        help=(
+            "Fetch real data for SYMBOL (A/HK/US/crypto) and auto-recommend "
+            "bounds, grid type & count. Overrides --lower/--upper/--count/--type/--symbol."
+        ),
+    )
+    p.add_argument("--window", type=int, default=120,
+                   help="Bars analyzed in auto mode (default 120 ≈ 6 months daily).")
+    p.add_argument("--method", choices=["sigma", "atr", "quantile"], default="sigma",
+                   help="Bound-derivation method (auto mode).")
+    p.add_argument("--safety", type=float, default=1.0,
+                   help="Bound safety multiplier (auto mode, 1.0=neutral, 1.2=wider).")
+    p.add_argument("--max-grids", type=int, default=60,
+                   help="Hard cap on auto-recommended grid count.")
+
+    # ---- backtest / output ----
     p.add_argument(
         "--backtest",
-        choices=["none", "sine", "trending-down", "volatile"],
+        choices=["none", "sine", "trending-down", "volatile", "auto"],
         default="none",
-        help="Run a backtest on built-in mock data.",
+        help="Run a backtest. 'auto' replays real K-line history (auto mode only).",
     )
     p.add_argument("--out", default="grid_report.html", help="Output HTML file path.")
     p.add_argument("--open", action="store_true", help="Open the report in default browser after write.")
     p.add_argument("--quiet", action="store_true", help="Suppress stdout chatter; only print the output path.")
+    p.add_argument("--json", action="store_true",
+                   help="Print the params + recommendation as JSON instead of generating HTML.")
     return p
 
 
-def _run_backtest(kind: str, params: dict) -> dict | None:
+# ---------------------------------------------------------------------------
+# Auto mode: fetch real data + recommend bounds
+# ---------------------------------------------------------------------------
+
+def _resolve_auto(args, params: dict) -> dict | None:
+    """Mutate ``params`` in-place with auto-recommended values. Return rec dict."""
+    from grid_trading.recommend import recommend_grid
+
+    rec = recommend_grid(
+        symbol=args.auto,
+        capital=args.capital,
+        fee_rate=args.fee,
+        window=args.window,
+        method=args.method,
+        max_grids=args.max_grids,
+        safety=args.safety,
+    )
+    if rec is None:
+        print(f"[ERROR] Failed to fetch real data for symbol: {args.auto}", file=sys.stderr)
+        print("[HINT]  Check network access. Verify symbol format "
+              "(A=600519, HK=00700, US=AAPL, crypto=BTC/USDT).", file=sys.stderr)
+        return None
+
+    quote_name = (rec.quote or {}).get("name") if rec.quote else None
+    params["symbol"] = quote_name or args.auto
+    params["price_lower"] = rec.price_lower
+    params["price_upper"] = rec.price_upper
+    params["grid_count"] = rec.grid_count
+    params["grid_type"] = rec.grid_type
+    return rec.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Backtest dispatch
+# ---------------------------------------------------------------------------
+
+def _run_backtest(kind: str, params: dict, *, auto_symbol: str | None = None) -> dict | None:
     if kind == "none":
         return None
     from grid_trading.strategy.grid_strategy import GridConfig, GridStrategy
     from grid_trading.backtest.simulator import BacktestSimulator
     from grid_trading.tests.mock_data import sine_wave, trending_down, volatile_spike
+
+    if kind == "auto":
+        if not auto_symbol:
+            print("[WARN] --backtest auto requires --auto; falling back to sine.", file=sys.stderr)
+            kind = "sine"
+        else:
+            from grid_trading.data import fetch_kline
+            bars = fetch_kline(auto_symbol, period="daily", bars=max(params["grid_count"] * 20, 250))
+            if not bars:
+                print("[WARN] couldn't fetch K-line for backtest; falling back to sine.", file=sys.stderr)
+                kind = "sine"
+            else:
+                series = [(b.timestamp, b.close) for b in bars]
 
     mid = (params["price_lower"] + params["price_upper"]) / 2
     amp = (params["price_upper"] - params["price_lower"]) / 2 * 0.85
@@ -66,8 +141,9 @@ def _run_backtest(kind: str, params: dict) -> dict | None:
             end_price=params["price_lower"],
             points=500,
         )
-    else:
+    elif kind == "volatile":
         series = volatile_spike(base_price=mid, points=500)
+    # else: kind == "auto" — series already prepared above
 
     cfg = GridConfig(
         symbol=params["symbol"],
@@ -97,6 +173,10 @@ def _run_backtest(kind: str, params: dict) -> dict | None:
     }
 
 
+# ---------------------------------------------------------------------------
+# Entry
+# ---------------------------------------------------------------------------
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
@@ -112,19 +192,50 @@ def main(argv: list[str] | None = None) -> int:
         "take_profit_price": args.take_profit_price,
     }
 
+    recommendation: dict | None = None
+    if args.auto:
+        recommendation = _resolve_auto(args, params)
+        if recommendation is None:
+            return 3
+    else:
+        # manual mode: enforce required args
+        missing = [k for k, v in {"--lower": args.lower, "--upper": args.upper,
+                                  "--count": args.count}.items() if v is None]
+        if missing:
+            print(f"[ERROR] Manual mode requires {', '.join(missing)} "
+                  "(or use --auto SYMBOL for real-data mode).", file=sys.stderr)
+            return 2
+
     builder = GridBuilder(fee_rate=args.fee)
-    build_fn = builder.build_geometric if args.grid_type == "geometric" else builder.build_arithmetic
+    build_fn = (
+        builder.build_geometric if params["grid_type"] == "geometric"
+        else builder.build_arithmetic
+    )
     try:
-        grids = build_fn(lower=args.lower, upper=args.upper, n=args.count, capital=args.capital)
+        grids = build_fn(
+            lower=params["price_lower"], upper=params["price_upper"],
+            n=params["grid_count"], capital=args.capital,
+        )
     except ValueError as e:
         print(f"[ERROR] {e}", file=sys.stderr)
-        rec = builder.recommend_grid_count(args.lower, args.upper, args.fee)
-        print(f"[HINT]  Try --count {rec} or widen the range.", file=sys.stderr)
+        rec_n = builder.recommend_grid_count(
+            params["price_lower"], params["price_upper"], args.fee
+        )
+        print(f"[HINT]  Try --count {rec_n} or widen the range.", file=sys.stderr)
         return 2
 
     summary = builder.summary(grids)
-    backtest = _run_backtest(args.backtest, params)
+    backtest = _run_backtest(args.backtest, params, auto_symbol=args.auto)
     risk_alerts = backtest.pop("risk_alerts", None) if backtest else None
+
+    if args.json:
+        print(json.dumps({
+            "params": params,
+            "summary": summary,
+            "recommendation": recommendation,
+            "backtest": backtest,
+        }, ensure_ascii=False, indent=2, default=str))
+        return 0
 
     html_doc = render_html_report(
         params=params,
@@ -132,6 +243,7 @@ def main(argv: list[str] | None = None) -> int:
         summary=summary,
         backtest=backtest,
         risk_alerts=risk_alerts,
+        recommendation=recommendation,
     )
 
     out_path = Path(args.out).expanduser().resolve()
@@ -139,7 +251,14 @@ def main(argv: list[str] | None = None) -> int:
     out_path.write_text(html_doc, encoding="utf-8")
 
     if not args.quiet:
-        print(f"✓ Grid built: {len(grids)} levels, type={args.grid_type}")
+        if recommendation:
+            print(f"✓ Auto: {recommendation.get('symbol', args.auto)} "
+                  f"current={recommendation['current_price']:.4f} "
+                  f"mid={recommendation['mid_price']:.4f} "
+                  f"range=[{recommendation['price_lower']:.4f}, "
+                  f"{recommendation['price_upper']:.4f}] "
+                  f"({recommendation['grid_count']} grids, {recommendation['grid_type']})")
+        print(f"✓ Grid built: {len(grids)} levels, type={params['grid_type']}")
         print(f"✓ Total capital: {args.capital:,.2f}")
         if backtest:
             print(f"✓ Backtest ({args.backtest}): return={backtest['total_return']*100:.2f}%, "

@@ -26,27 +26,31 @@ def render_html_report(
     summary: dict[str, Any],
     backtest: dict[str, Any] | None = None,
     risk_alerts: list[dict[str, Any]] | None = None,
+    recommendation: dict[str, Any] | None = None,
 ) -> str:
-    """Render a complete HTML report as a single string.
+    """Render a complete HTML document as a single string.
 
     Args:
         params: Echo of user-supplied parameters (symbol, range, count, ...).
         grids: List of GridLevel objects from GridBuilder.
         summary: Dict from GridBuilder.summary(grids).
-        backtest: Optional dict with backtest fields (total_return, sharpe,
-            max_drawdown, equity_curve, trade_log, trading_days, ...).
+        backtest: Optional dict with backtest fields.
         risk_alerts: Optional list of dicts with keys level/type/message.
-
-    Returns:
-        Complete HTML document as a string.
+        recommendation: Optional dict produced by
+            ``grid_trading.recommend.GridRecommendation.to_dict()`` —
+            rendered as the top "建议" section in auto mode.
     """
     parts = [
         _HEAD,
         _render_header(params),
+    ]
+    if recommendation:
+        parts.append(_render_recommendation(recommendation))
+    parts.extend([
         _render_params(params),
         _render_grid_table(grids),
         _render_summary(summary),
-    ]
+    ])
     if backtest:
         parts.append(_render_backtest(backtest, params.get("symbol", "")))
     if risk_alerts:
@@ -285,6 +289,59 @@ table.grid tr:hover td { background: rgba(88,166,255,0.06); }
 }
 .alert .msg { color: var(--muted); }
 
+/* Recommendation panel */
+.rec-hero {
+  background: linear-gradient(180deg, rgba(88,166,255,0.10), rgba(88,166,255,0.02));
+  border: 1px solid rgba(88,166,255,0.35);
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-bottom: 28px;
+}
+.rec-hero h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--accent-2);
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+.rec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.rec-cell .label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+.rec-cell .value {
+  font-size: 22px;
+  font-weight: 600;
+  font-feature-settings: "tnum";
+  color: var(--text);
+}
+.rec-cell .value.mid    { color: var(--accent-2); }
+.rec-cell .value.upper  { color: var(--red); }
+.rec-cell .value.lower  { color: var(--green); }
+.rec-cell .sub {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+.rec-notes {
+  margin-top: 8px;
+  border-top: 1px dashed rgba(88,166,255,0.2);
+  padding-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.rec-notes ul { margin: 0; padding-left: 18px; }
+.rec-notes li { margin-bottom: 4px; }
+
 /* Footer */
 .footer {
   margin-top: 60px;
@@ -337,6 +394,80 @@ def _render_header(params: dict[str, Any]) -> str:
           生成于 {now}
         </div>
       </div>
+    </div>
+    """
+
+
+def _render_recommendation(rec: dict[str, Any]) -> str:
+    """Top-of-report panel with current price, mid, lower/upper, notes."""
+    quote = rec.get("quote") or {}
+    name = html.escape(str(quote.get("name") or rec.get("symbol", "")))
+    src = html.escape(str(quote.get("source") or ""))
+    cur_chg = float(quote.get("change_pct") or 0.0)
+    chg_cls = "pos" if cur_chg >= 0 else "neg"
+    chg_str = f"{cur_chg * 100:+.2f}%" if cur_chg else "—"
+
+    pe = quote.get("pe_ttm")
+    pb = quote.get("pb")
+    cur = float(rec.get("current_price") or 0.0)
+    mid = float(rec.get("mid_price") or 0.0)
+    lower = float(rec.get("price_lower") or 0.0)
+    upper = float(rec.get("price_upper") or 0.0)
+    band_pct = (upper - lower) / mid * 100 if mid else 0.0
+    bars_n = rec.get("bars_analyzed", 0)
+    method = html.escape(str(rec.get("method") or "sigma"))
+
+    cells = [
+        f'<div class="rec-cell"><div class="label">当前价</div>'
+        f'<div class="value">{_fmt_num(cur, 4)}</div>'
+        f'<div class="sub {chg_cls}">{chg_str}'
+        + (f' · {src}' if src else '') + '</div></div>',
+
+        f'<div class="rec-cell"><div class="label">建议中线价</div>'
+        f'<div class="value mid">{_fmt_num(mid, 4)}</div>'
+        f'<div class="sub">中位数 70% + 现价 30%</div></div>',
+
+        f'<div class="rec-cell"><div class="label">建议网格下限</div>'
+        f'<div class="value lower">{_fmt_num(lower, 4)}</div>'
+        f'<div class="sub">{((lower - mid)/mid*100 if mid else 0):+.2f}% vs 中线</div></div>',
+
+        f'<div class="rec-cell"><div class="label">建议网格上限</div>'
+        f'<div class="value upper">{_fmt_num(upper, 4)}</div>'
+        f'<div class="sub">{((upper - mid)/mid*100 if mid else 0):+.2f}% vs 中线</div></div>',
+
+        f'<div class="rec-cell"><div class="label">区间宽度</div>'
+        f'<div class="value">{band_pct:.2f}%</div>'
+        f'<div class="sub">基于 {bars_n} 根 K 线 · method={method}</div></div>',
+
+        f'<div class="rec-cell"><div class="label">建议格数 / 类型</div>'
+        f'<div class="value">{rec.get("grid_count", "—")}'
+        f' <span style="color:var(--muted);font-size:13px;">'
+        f'· {"等比" if rec.get("grid_type") == "geometric" else "等差"}</span></div>'
+        f'<div class="sub">单格步长 ≈ {(rec.get("min_step_ratio") or 0)*100:.3f}%</div></div>',
+    ]
+    if pe is not None or pb is not None:
+        meta = []
+        if pe is not None:
+            meta.append(f"PE {pe:.2f}")
+        if pb is not None:
+            meta.append(f"PB {pb:.2f}")
+        cells.append(
+            f'<div class="rec-cell"><div class="label">估值</div>'
+            f'<div class="value" style="font-size:18px;">{html.escape(" · ".join(meta))}</div>'
+            f'<div class="sub">来自 {src or "—"}</div></div>'
+        )
+
+    notes = rec.get("notes") or []
+    notes_block = ""
+    if notes:
+        items = "".join(f"<li>{html.escape(str(n))}</li>" for n in notes)
+        notes_block = f'<div class="rec-notes"><ul>{items}</ul></div>'
+
+    return f"""
+    <div class="rec-hero">
+      <h2>自动建议 · {name}</h2>
+      <div class="rec-grid">{"".join(cells)}</div>
+      {notes_block}
     </div>
     """
 
