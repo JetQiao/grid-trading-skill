@@ -19,6 +19,7 @@
 const fs            = require('fs');
 const os            = require('os');
 const path          = require('path');
+const readline      = require('readline');
 const { spawnSync } = require('child_process');
 
 // ---------------------------------------------------------------------------
@@ -323,35 +324,184 @@ function runReport(args) {
   process.exit(r.status || 0);
 }
 
+// ---------------------------------------------------------------------------
+// `auto <symbol> [capital]` — easiest path: one symbol + one number → report
+// ---------------------------------------------------------------------------
+function buildAutoArgs(symbol, capital, opts) {
+  const outPath = opts.out || path.join(os.tmpdir(), `grid_report_${Date.now()}.html`);
+  const args = [
+    '-m', 'grid_trading.cli',
+    '--auto',     symbol,
+    '--capital',  String(capital),
+    '--out',      outPath,
+  ];
+  if (opts.fee != null) args.push('--fee', String(opts.fee));
+  if (opts.method)      args.push('--method', opts.method);
+  if (opts.window)      args.push('--window', String(opts.window));
+  if (opts.safety)      args.push('--safety', String(opts.safety));
+  if (opts.maxGrids)    args.push('--max-grids', String(opts.maxGrids));
+  if (opts.backtest)    args.push('--backtest', opts.backtest);
+  if (!opts.noOpen)     args.push('--open');
+  return { args, outPath };
+}
+
+function pythonEnv() {
+  const env = { ...process.env };
+  const candidates = [CODEX_DIR, CLAUDE_DIR, PKG_ROOT].filter(exists);
+  env.PYTHONPATH = [...candidates, env.PYTHONPATH].filter(Boolean).join(path.delimiter);
+  return env;
+}
+
+function runAuto(argv) {
+  const positional = argv.filter((a) => !a.startsWith('--'));
+  const flags = argv.filter((a) => a.startsWith('--'));
+  const symbol  = positional[1];
+  const capital = positional[2] ? parseFloat(String(positional[2]).replace(/[万w]/i, '0000').replace(/,/g, '')) : 10000;
+
+  if (!symbol) {
+    err('用法: npx grid-trading-skill auto <代码> [本金]');
+    err('示例: npx grid-trading-skill auto 600519 50000');
+    err('     npx grid-trading-skill auto BTC/USDT 10000');
+    err('     npx grid-trading-skill auto AAPL 5000');
+    err('如不知道写什么，请运行 npx grid-trading-skill ask 进入向导。');
+    process.exit(1);
+  }
+  if (!Number.isFinite(capital) || capital <= 0) {
+    err(`本金解析失败: ${positional[2]}`);
+    process.exit(1);
+  }
+
+  const py = findPython();
+  if (!py) {
+    err('需要 Python 3.11+，但 PATH 上没找到。请先安装 Python。');
+    process.exit(1);
+  }
+
+  const opts = {
+    fee:       getFlagValue(flags, '--fee', argv),
+    method:    getFlagValue(flags, '--method', argv),
+    window:    getFlagValue(flags, '--window', argv),
+    safety:    getFlagValue(flags, '--safety', argv),
+    maxGrids:  getFlagValue(flags, '--max-grids', argv),
+    backtest:  flags.includes('--backtest') ? 'auto' : null,
+    noOpen:    flags.includes('--no-open'),
+  };
+
+  const { args: pyArgs } = buildAutoArgs(symbol, capital, opts);
+
+  console.log(paint(C.bold, `\n  grid-trading-skill v${VERSION} — auto mode\n`));
+  info(`代码:   ${symbol}`);
+  info(`本金:   ${capital.toLocaleString()}`);
+  info('正在拉取实时数据 + 计算建议...');
+
+  const r = spawnSync(py, pyArgs, { stdio: 'inherit', env: pythonEnv() });
+  if (r.status !== 0) {
+    err('生成失败。常见原因：');
+    err('  · 网络无法访问东方财富 / Yahoo / Binance（请检查代理）');
+    err('  · 代码格式错误（A 股 600519 / 港股 00700 / 美股 AAPL / 加密 BTC/USDT）');
+    process.exit(r.status || 1);
+  }
+}
+
+function getFlagValue(flags, name, argv) {
+  const f = flags.find((x) => x === name || x.startsWith(name + '='));
+  if (!f) return null;
+  if (f.includes('=')) return f.split('=').slice(1).join('=');
+  const idx = argv.indexOf(name);
+  return idx >= 0 ? argv[idx + 1] : null;
+}
+
+// ---------------------------------------------------------------------------
+// `ask` — interactive wizard for total beginners
+// ---------------------------------------------------------------------------
+async function ask() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const q  = (prompt) => new Promise((resolve) => rl.question(prompt, resolve));
+
+  console.log(paint(C.bold, `\n  grid-trading-skill v${VERSION} — 网格交易向导\n`));
+  console.log(paint(C.dim, '  按回车使用默认值，Ctrl+C 退出。\n'));
+
+  let symbol = (await q(paint(C.blue, '? ') + '股票代码 (A股=600519, 港股=00700, 美股=AAPL, 加密=BTC/USDT): ')).trim();
+  while (!symbol) {
+    symbol = (await q(paint(C.yellow, '! ') + '必填，请输入: ')).trim();
+  }
+
+  const capRaw = (await q(paint(C.blue, '? ') + '本金 (默认 10000，可写 5万 或 50000): ')).trim();
+  let capital = 10000;
+  if (capRaw) {
+    const norm = capRaw.replace(/万/g, '0000').replace(/,/g, '');
+    const n = parseFloat(norm);
+    if (Number.isFinite(n) && n > 0) capital = n;
+    else { err(`本金无效: ${capRaw}`); rl.close(); process.exit(1); }
+  }
+
+  const feeRaw = (await q(paint(C.blue, '? ') + '手续费率 (默认 0.001 = 0.1%，A 股可写 0.0003): ')).trim();
+  const fee = feeRaw ? parseFloat(feeRaw) : null;
+
+  const methodRaw = (await q(paint(C.blue, '? ') + '上下限算法 [sigma/atr/quantile] (默认 sigma): ')).trim().toLowerCase();
+  const method = ['sigma', 'atr', 'quantile'].includes(methodRaw) ? methodRaw : null;
+
+  const btRaw = (await q(paint(C.blue, '? ') + '是否用真实历史回测一次？[Y/n] (默认 Y): ')).trim().toLowerCase();
+  const backtest = (btRaw === '' || btRaw === 'y' || btRaw === 'yes') ? 'auto' : null;
+
+  const openRaw = (await q(paint(C.blue, '? ') + '生成后用浏览器打开？[Y/n] (默认 Y): ')).trim().toLowerCase();
+  const noOpen = openRaw === 'n' || openRaw === 'no';
+
+  rl.close();
+
+  const py = findPython();
+  if (!py) { err('需要 Python 3.11+，请先安装 Python。'); process.exit(1); }
+
+  const { args: pyArgs } = buildAutoArgs(symbol, capital, { fee, method, backtest, noOpen });
+
+  console.log();
+  info(`正在为 ${paint(C.bold, symbol)} 生成网格建议（本金 ${capital.toLocaleString()}）...`);
+  const r = spawnSync(py, pyArgs, { stdio: 'inherit', env: pythonEnv() });
+  if (r.status !== 0) {
+    err('生成失败。可能是网络问题（无法访问东方财富/Yahoo/Binance）或代码格式错误。');
+    process.exit(r.status || 1);
+  }
+}
+
 function help() {
   console.log(`
   ${paint(C.bold, 'grid-trading-skill')} v${VERSION}
   ${paint(C.dim, 'Grid trading strategy — Claude Code & OpenAI Codex CLI skill.')}
 
+  ${paint(C.bold, '零代码三种最快用法:')}
+    ${paint(C.green, '①')} 交互式向导:        npx grid-trading-skill ask
+    ${paint(C.green, '②')} 一行 auto 命令:    npx grid-trading-skill auto 600519 50000
+    ${paint(C.green, '③')} 装到 Claude Code:  npx grid-trading-skill   ${paint(C.dim, '(默认 install)')}
+                          然后在 Claude Code 里用大白话说"帮我看茅台 5 万本金网格"
+
   ${paint(C.bold, 'Usage:')}
     npx grid-trading-skill ${paint(C.dim, '[command] [options]')}
 
   ${paint(C.bold, 'Commands:')}
-    install         Install skill into ~/.claude/ and ~/.codex/  ${paint(C.dim, '(default)')}
-    uninstall       Remove both installations
-    status          Show installation state
-    run "<prompt>"  Generate an HTML report from a natural-language prompt
-    help            Show this message
+    install                         安装到 ~/.claude/ 和 ~/.codex/  ${paint(C.dim, '(默认)')}
+    uninstall                       卸载
+    status                          查看安装状态
+    auto <代码> [本金]              一行命令出真实数据网格报告  ${paint(C.green, '★ v1.2.1 推荐')}
+    ask                             交互式向导，问答式生成报告  ${paint(C.green, '★ 零代码')}
+    run "<自然语言>"                解析中文 prompt 并生成报告（手动模式）
+    help                            显示帮助
 
-  ${paint(C.bold, 'Options (install):')}
-    --claude-only   Install only Claude Code skill
-    --codex-only    Install only Codex agent
+  ${paint(C.bold, 'auto / ask 选项:')}
+    --no-open                       不要自动打开浏览器
+    --backtest                      额外跑一次真实历史回测
+    --fee 0.0003                    手续费率（默认 0.001）
+    --method {sigma,atr,quantile}   上下限算法（默认 sigma）
+    --safety 1.2                    上下限安全垫（默认 1.0，越大越宽）
+    --max-grids 30                  自动格数上限（默认 60）
+    --window 260                    分析多少根日线（默认 120 ≈ 6 个月）
 
-  ${paint(C.bold, 'Options (run):')}
-    --no-open       Don't open the report in browser
-    --no-backtest   Build grid only, skip backtest
-    --out <path>    Output HTML path (default: tmp dir)
-
-  ${paint(C.bold, 'Examples:')}
-    npx grid-trading-skill
-    npx grid-trading-skill install --claude-only
+  ${paint(C.bold, '示例:')}
+    npx grid-trading-skill ask
+    npx grid-trading-skill auto 600519 50000
+    npx grid-trading-skill auto 00700 20000 --backtest
+    npx grid-trading-skill auto BTC/USDT 10000 --method atr --safety 1.2
+    npx grid-trading-skill auto AAPL 5000 --window 260
     npx grid-trading-skill run "BTC/USDT 40000~60000 20格 本金10000 手续费0.1%"
-    npx grid-trading-skill uninstall
 `);
 }
 
@@ -370,6 +520,8 @@ function main(argv) {
       case 'uninstall':          uninstall(); break;
       case 'status':             status(); break;
       case 'run':                runReport(args); break;
+      case 'auto':               runAuto(args); break;
+      case 'ask':                ask().catch((e) => { err(e.message || String(e)); process.exit(1); }); break;
       case 'help':
       case '--help':
       case '-h':                 help(); break;
