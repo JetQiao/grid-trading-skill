@@ -9,18 +9,59 @@
 ![python](https://img.shields.io/badge/python-3.11+-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-## 🚀 v1.2.1 一键真实数据网格推荐
+## 🚀 三种零代码用法（v1.2.2 起）
+
+不会代码？三选一即可，**只要电脑有 Node.js**：
+
+### ① 交互式向导（最友好，全中文问答）
 
 ```bash
-python -m grid_trading.cli --auto 600519 --capital 50000 --open      # 茅台
-python -m grid_trading.cli --auto 00700  --capital 20000 --open      # 腾讯
-python -m grid_trading.cli --auto AAPL   --capital 5000  --open      # 苹果
-python -m grid_trading.cli --auto BTC/USDT --capital 10000 --backtest auto --open
+npx github:JetQiao/grid-trading-skill ask
 ```
 
-数据源（全部零 API key、自动多源回退）：
+```
+? 股票代码 (A股=600519, 港股=00700, 美股=AAPL, 加密=BTC/USDT): 600519
+? 本金 (默认 10000，可写 5万 或 50000): 5万
+? 手续费率 (默认 0.001 = 0.1%，A 股可写 0.0003): 0.0003
+? 上下限算法 [sigma/atr/quantile] (默认 sigma): ↵
+? 是否用真实历史回测一次？[Y/n]: ↵
+? 生成后用浏览器打开？[Y/n]: ↵
+[INFO] 正在为 600519 生成网格建议（本金 50,000）...
+✓ 报告已自动在浏览器打开
+```
+
+### ② 一行命令（懂股票代码就行）
+
+```bash
+npx github:JetQiao/grid-trading-skill auto 600519 5万         # 茅台 5 万本金
+npx github:JetQiao/grid-trading-skill auto 00700 20000        # 腾讯 2 万
+npx github:JetQiao/grid-trading-skill auto AAPL 5000          # 苹果 5000 美元
+npx github:JetQiao/grid-trading-skill auto BTC/USDT 10000 --backtest
+```
+
+回车后自动：
+拉实时数据 → 算**建议中线价 / 上下限 / 格数** → 生成深色 HTML 报告 → 用默认浏览器打开。
+
+### ③ 装到 Claude Code，对话调用（最丝滑）
+
+```bash
+npx github:JetQiao/grid-trading-skill        # 默认就是安装
+```
+
+然后打开 [Claude Code](https://claude.com/claude-code)，像跟人说话一样问：
+
+> 帮我看一下贵州茅台 5 万本金的网格怎么做
+> 给 BTC/USDT 1 万 USDT 来个网格建议
+
+Claude 会自动调用本 skill，pull 数据 + 出报告。**全程不写一行代码**。
+
+---
+
+## 🛠 数据来源（全部零 API key，自动多源回退）
+
 东方财富 · 雪球 · 腾讯 · 新浪 · Yahoo · 巨潮 cninfo · DuckDuckGo · Binance ·
 微博 / 知乎 / 百度 / 抖音 / 头条 / B 站 · `akshare`、`yfinance` 可选增强。
+单源失败自动降级到下一个，不需要任何配置。
 
 ---
 
