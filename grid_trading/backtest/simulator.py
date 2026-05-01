@@ -76,13 +76,20 @@ class BacktestSimulator:
         enriched_log: list[dict] = []
         risk_alerts: list[RiskAlert] = []
         cfg = self._strategy.config
+        # Edge-trigger dedup: a recurring breach (e.g. price above upper for
+        # 50 ticks) should fire one alert at the *transition*, not 50.
+        last_alert_type: str | None = None
 
         for ts, price in price_series:
             # Risk check before processing tick
             snap = self._strategy._position.snapshot()
             alert = self._risk_checker.check_on_price_update(price, snap, cfg)
             if alert is not None:
-                risk_alerts.append(alert)
+                if alert.type != last_alert_type:
+                    risk_alerts.append(alert)
+                last_alert_type = alert.type
+            else:
+                last_alert_type = None
 
             # Drive the strategy
             filled = self._strategy.on_price_update(price, ts)
