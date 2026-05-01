@@ -123,7 +123,12 @@ def _run_backtest(kind: str, params: dict, *, auto_symbol: str | None = None) ->
             kind = "sine"
         else:
             from grid_trading.data import fetch_kline
-            bars = fetch_kline(auto_symbol, period="daily", bars=max(params["grid_count"] * 20, 250))
+            # Replay the same window the recommender used so that bounds
+            # match the historical price range — otherwise older bars
+            # outside the analysis window can spuriously breach the upper /
+            # lower bound and pollute the report. Pass --window to widen.
+            bt_bars = params.get("window") or 120
+            bars = fetch_kline(auto_symbol, period="daily", bars=bt_bars)
             if not bars:
                 print("[WARN] couldn't fetch K-line for backtest; falling back to sine.", file=sys.stderr)
                 kind = "sine"
@@ -190,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         "fee_rate": args.fee,
         "stop_loss_price": args.stop_loss_price,
         "take_profit_price": args.take_profit_price,
+        "window": args.window,
     }
 
     recommendation: dict | None = None

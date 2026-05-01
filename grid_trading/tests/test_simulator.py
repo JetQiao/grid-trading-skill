@@ -123,6 +123,15 @@ class TestTrendingDownScenario(unittest.TestCase):
     def test_return_negative_in_severe_downtrend(self) -> None:
         self.assertLess(self.result.total_return, 0)
 
+    def test_consecutive_same_alerts_deduplicated(self) -> None:
+        """Edge-trigger dedup: a 500-tick downtrend below lower bound must
+        not produce 500 consecutive ``below_lower`` alerts in a row."""
+        types = [a.type for a in self.result.risk_alerts]
+        # No two adjacent alerts share the same type
+        for prev, curr in zip(types, types[1:]):
+            self.assertNotEqual(prev, curr,
+                f"adjacent alerts of same type: {prev}")
+
 
 class TestVolatileSpikeScenario(unittest.TestCase):
     """Drop-then-recover scenario exercises buy accumulation and sell exit."""
